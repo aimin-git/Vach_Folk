@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from talkers.synctalk.encoding import get_encoder
+from .encoding import get_encoder
 from .renderer import NeRFRenderer
 
 
@@ -177,8 +177,6 @@ class NeRFNetwork(NeRFRenderer):
             self.audio_in_dim = 29
         elif 'hubert' in self.opt.asr_model:
             self.audio_in_dim = 1024
-        elif 'ave' in self.opt.asr_model:
-            self.audio_in_dim = 512
         else:
             self.audio_in_dim = 32
             
@@ -188,7 +186,7 @@ class NeRFNetwork(NeRFRenderer):
         # audio network
         self.audio_dim = audio_dim
         if self.opt.asr_model == 'ave':
-            self.audio_net = AudioNet_ave(self.audio_in_dim, self.audio_dim)  # 正常传入512x256的
+            self.audio_net = AudioNet_ave(self.audio_in_dim, self.audio_dim)
         else:
             self.audio_net = AudioNet(self.audio_in_dim, self.audio_dim)
 

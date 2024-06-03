@@ -715,37 +715,37 @@ class Trainer(object):
 
         # workspace prepare
         self.log_ptr = None
-        # if self.workspace is not None:
-        #     os.makedirs(self.workspace, exist_ok=True)
-        #     self.log_path = os.path.join(workspace, f"log_{self.name}.txt")
-        #     self.log_ptr = open(self.log_path, "a+")
-        #
-        #     self.ckpt_path = os.path.join(self.workspace, 'checkpoints')
-        #     self.best_path = f"{self.ckpt_path}/{self.name}.pth"
-        #     os.makedirs(self.ckpt_path, exist_ok=True)
+        if self.workspace is not None:
+            os.makedirs(self.workspace, exist_ok=True)        
+            self.log_path = os.path.join(workspace, f"log_{self.name}.txt")
+            self.log_ptr = open(self.log_path, "a+")
+
+            self.ckpt_path = os.path.join(self.workspace, 'checkpoints')
+            self.best_path = f"{self.ckpt_path}/{self.name}.pth"
+            os.makedirs(self.ckpt_path, exist_ok=True)
             
         self.log(f'[INFO] Trainer: {self.name} | {self.time_stamp} | {self.device} | {"fp16" if self.fp16 else "fp32"} | {self.workspace}')
         self.log(f'[INFO] #parameters: {sum([p.numel() for p in model.parameters() if p.requires_grad])}')
 
-        # if self.workspace is not None:
-        #     if self.use_checkpoint == "scratch":
-        #         self.log("[INFO] Training from scratch ...")
-        #     elif self.use_checkpoint == "latest":
-        #         self.log("[INFO] Loading latest checkpoint ...")
-        #         self.load_checkpoint()
-        #     elif self.use_checkpoint == "latest_model":
-        #         self.log("[INFO] Loading latest checkpoint (model only)...")
-        #         self.load_checkpoint(model_only=True)
-        #     elif self.use_checkpoint == "best":
-        #         if os.path.exists(self.best_path):
-        #             self.log("[INFO] Loading best checkpoint ...")
-        #             self.load_checkpoint(self.best_path)
-        #         else:
-        #             self.log(f"[INFO] {self.best_path} not found, loading latest ...")
-        #             self.load_checkpoint()
-        #     else: # path to ckpt
-        self.log(f"[INFO] Loading {self.use_checkpoint} ...")
-        self.load_checkpoint(self.use_checkpoint)
+        if self.workspace is not None:
+            if self.use_checkpoint == "scratch":
+                self.log("[INFO] Training from scratch ...")
+            elif self.use_checkpoint == "latest":
+                self.log("[INFO] Loading latest checkpoint ...")
+                self.load_checkpoint()
+            elif self.use_checkpoint == "latest_model":
+                self.log("[INFO] Loading latest checkpoint (model only)...")
+                self.load_checkpoint(model_only=True)
+            elif self.use_checkpoint == "best":
+                if os.path.exists(self.best_path):
+                    self.log("[INFO] Loading best checkpoint ...")
+                    self.load_checkpoint(self.best_path)
+                else:
+                    self.log(f"[INFO] {self.best_path} not found, loading latest ...")
+                    self.load_checkpoint()
+            else: # path to ckpt
+                self.log(f"[INFO] Loading {self.use_checkpoint} ...")
+                self.load_checkpoint(self.use_checkpoint)
 
     def __del__(self):
         if self.log_ptr: 
@@ -962,7 +962,7 @@ class Trainer(object):
         bg_coords = data['bg_coords'] # [1, N, 2]
         poses = data['poses'] # [B, 7]
 
-        auds = data['auds'] # [B, 29, 16]  # ave B x 512x 16
+        auds = data['auds'] # [B, 29, 16]
         index = data['index']
         H, W = data['H'], data['W']
 
@@ -1098,7 +1098,7 @@ class Trainer(object):
         imageio.mimwrite(os.path.join(save_path, f'{name}.mp4'), all_preds, fps=25, quality=8, macro_block_size=1)
         imageio.mimwrite(os.path.join(save_path, f'{name}_depth.mp4'), all_preds_depth, fps=25, quality=8, macro_block_size=1)
         if self.opt.aud != '' and self.opt.asr_model == 'ave':
-            os.system(f'ffmpeg -i {os.path.join(save_path, f"{name}.mp4")} -i {self.opt.aud} -strict -2 {os.path.join(save_path, f"{name}_audio.mp4")} -y')
+            os.system(f'ffmpeg -i {os.path.join(save_path, f"{name}.mp4")} -i {self.opt.aud} -strict -2 -c:v copy {os.path.join(save_path, f"{name}_audio.mp4")} -y')
 
         self.log(f"==> Finished Test.")
     
@@ -1616,9 +1616,8 @@ def _normalize(S):
 
 
 class AudDataset(object):
-    def __init__(self, wavpath=None, wav=None):
-        if wav is None:
-            wav = load_wav(wavpath, 16000)
+    def __init__(self, wavpath):
+        wav = load_wav(wavpath, 16000)
 
         self.orig_mel = melspectrogram(wav).T
         self.data_len = int((self.orig_mel.shape[0] - 16) / 80. * float(25)) + 2

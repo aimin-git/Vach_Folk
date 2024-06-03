@@ -5,7 +5,7 @@ from threading import Thread
 
 import aiohttp_cors
 from aiohttp import web
-from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from flask import Flask
 from flask_sockets import Sockets
 from gevent import pywsgi
@@ -27,8 +27,19 @@ pcs = set()
 async def offer(request):
     params = await request.json()
     offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+    
+    iceServers = [RTCIceServer(urls=["stun:stun.l.google.com:19302"]), RTCIceServer(urls=["turn:turn.service.yongdao365.com:3478"],username="yongdao",credential="VM5LVDn8fe")]
 
-    pc = RTCPeerConnection()
+    # Debugging: Print the iceServers configuration
+    print("ICE Servers Configuration:", iceServers)
+
+    configuration = RTCConfiguration(iceServers=iceServers)
+
+    # Debugging: Check if the configuration is set correctly
+    print("RTC Configuration:", configuration)
+
+    pc = RTCPeerConnection(configuration=configuration)
+#    pc = RTCPeerConnection()
     pcs.add(pc)
 
     @pc.on("connectionstatechange")
@@ -68,6 +79,8 @@ def echo_socket(ws):
         print('建立连接！')
         while True:
             message = ws.receive()
+            print('Received:', message)
+
             if message:
                 asyncio.get_event_loop().run_until_complete(link.say(message))
             else:

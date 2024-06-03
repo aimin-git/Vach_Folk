@@ -29,6 +29,7 @@ from talkers.er_nerf.nerf_triplane.network import NeRFNetwork
 from talkers.er_nerf.nerf_triplane.provider import nerf_matrix_to_ngp, smooth_camera_path
 from talkers.er_nerf.nerf_triplane.utils import get_bg_coords, get_audio_features, get_rays, seed_everything, Trainer
 
+OUTPUT_FILE = "test.mp3"
 
 class NerfTestDataset:
     def __init__(self, opt, device, downscale=1):
@@ -548,8 +549,9 @@ class ErNerfLink:
 
     def push_audio(self, byte_stream):
         if self.opt.tts == "edgetts":
+            print("audio data", byte_stream)
             self.asr.input_stream.write(byte_stream)
-            if len(byte_stream)<=0:
+            if len(byte_stream)>=0:
                 self.asr.input_stream.seek(0)
                 stream = self.get_adapter_stream(self.asr.input_stream)  # 统一转换格式
                 streamlen = stream.shape[0]
@@ -704,15 +706,15 @@ class ErNerfLink:
             # print(f'[WARN] audio sample rate is {sample_rate}, resampling into {self.asr.sample_rate}.')
             stream = resampy.resample(x=stream, sr_orig=sample_rate, sr_new=self.asr.sample_rate)
         return stream
-
     async def say(self, text, voicename="zh-CN-YunxiaNeural", tts_type="edgetts"):  # zh-CN-YunyangNeural
         if tts_type == "edgetts":
             communicate = edge_tts.Communicate(text, voicename)
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    self.push_audio(chunk["data"])
-                elif chunk["type"] == "WordBoundary":
-                    pass
+            with open(OUTPUT_FILE, "wb") as file:
+                for chunk in communicate.stream_sync():
+                    if chunk["type"] == "audio":
+                        self.push_audio(chunk["data"])
+                    elif chunk["type"] == "WordBoundary":
+                        pass
 
     # def _clean(self):
     #     self.asr.queue = Queue()
