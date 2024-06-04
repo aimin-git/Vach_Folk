@@ -22,6 +22,7 @@ from tqdm import tqdm
 from transformers import Wav2Vec2Processor, AutoProcessor, AutoModelForCTC
 import pandas as pd
 import torch.nn.functional as F
+from soundfile import LibsndfileError
 
 from core.stream_track import AUDIO_PTIME, SAMPLE_RATE
 from talkers.er_nerf.config import set_opt
@@ -549,8 +550,8 @@ class ErNerfLink:
 
     def push_audio(self, byte_stream):
         if self.opt.tts == "edgetts":
-            print("audio data", byte_stream)
             self.asr.input_stream.write(byte_stream)
+            print("push_audio byte_stream length", len(byte_stream))
             if len(byte_stream)>=0:
                 self.asr.input_stream.seek(0)
                 stream = self.get_adapter_stream(self.asr.input_stream)  # 统一转换格式
@@ -562,7 +563,7 @@ class ErNerfLink:
                     streamlen -= self.asr.chunk
                     idx += self.asr.chunk
                     num += 1
-
+                #print("push audio")
                 self.user_audio_list.append(stream.shape[0])  # test
                 # if streamlen>0:  #skip last frame(not 20ms)
                 #    self.queue.put(stream[idx:])
@@ -583,7 +584,7 @@ class ErNerfLink:
             audio_time = streamlen / float(self.asr.sample_rate)
             n_frame = int(math.ceil(audio_time * 25)) + self.asr.warm_up_steps
             distance_frame = max(10, int(math.ceil((25 - self.opt.real_fps) * audio_time)))
-
+            print("listen and cal block", streamlen, audio_time, n_frame, distance_frame)
             # 计算下一帧出现位置  _streams.
             # 上一段未播放完毕
             if self.video_track.blocks:  # [block1, clear, block2, clear block3]
@@ -624,6 +625,7 @@ class ErNerfLink:
             count = 0
             insert_frame_idx, n_frame = self.render_blocks.pop(0)
             t = time.time()
+            print("listen and render", insert_frame_idx, n_frame)
             for i in range(insert_frame_idx, insert_frame_idx + n_frame):
                 idx = i % self.video_track.stream_len
                 for _ in range(2):  # run 2 ASR steps (audio is at 50FPS, video is at 25FPS)
@@ -693,8 +695,9 @@ class ErNerfLink:
             asyncio.run_coroutine_threadsafe(self.audio_track._queue.put(audio_frame), self.loop)
 
     def get_adapter_stream(self, byte_stream):
+        #try:
         stream, sample_rate = sf.read(byte_stream)
-        # print(f'[INFO]tts audio stream {sample_rate}: {stream.shape}')
+        print(f'[INFO]tts audio stream {sample_rate}: {stream.shape}')
         stream = stream.astype(np.float32)
 
         if stream.ndim > 1:
@@ -706,6 +709,13 @@ class ErNerfLink:
             # print(f'[WARN] audio sample rate is {sample_rate}, resampling into {self.asr.sample_rate}.')
             stream = resampy.resample(x=stream, sr_orig=sample_rate, sr_new=self.asr.sample_rate)
         return stream
+       # except LibsndfileError as e:
+        #    print(f"libsndfile error: {e}")
+        #    return None 
+        #except Exception as e:
+        #    print(f"An unexpected error occurred: {e}")
+        #    return None
+
     async def say(self, text, voicename="zh-CN-YunxiaNeural", tts_type="edgetts"):  # zh-CN-YunyangNeural
         if tts_type == "edgetts":
             communicate = edge_tts.Communicate(text, voicename)

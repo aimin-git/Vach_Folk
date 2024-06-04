@@ -105,7 +105,7 @@ if __name__ == '__main__':
     parser.add_argument('--model_name', type=str, default='obama')
     opt = parser.parse_args()
     opt.base_dir = os.path.dirname(os.path.abspath(__file__))  # root
-    opt.real_fps = 15
+    opt.real_fps = 25
     opt.real_fps = min(opt.real_fps, 25)  # <=25
     if opt.real_fps >= 25:
         opt.block_mode = False

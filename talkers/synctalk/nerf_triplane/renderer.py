@@ -670,6 +670,7 @@ class NeRFRenderer(nn.Module):
             raise NotImplementedError
 
         else:
+            print("model rendering")
             results = _run(rays_o, rays_d, auds, bg_coords, poses, **kwargs)
 
         return results
