@@ -297,6 +297,7 @@ class ASR:
         if self.stride_left_size > 0:
             self.frames.extend([np.zeros(self.chunk, dtype=np.float32)] * self.stride_left_size)
 
+        self.recframes = []
         self.exit_event = Event()
         # create input stream
         self.queue = Queue()
@@ -407,10 +408,10 @@ class ASR:
             return np.zeros(self.chunk, dtype=np.float32)
         try:
             frame = self.queue.get(block=False)
-            # print(f'[INFO] get audio frame {frame.shape}')
+            print(f'[INFO] get audio frame {frame.shape}')
         except queue.Empty:
             frame = np.zeros(self.chunk, dtype=np.float32)  # 无音频填充空数据
-            # print('[INFO] get Empty audio frame')
+            #print('[INFO] get Empty audio frame')
         self.idx = self.idx + self.chunk
         return frame
 
@@ -422,6 +423,9 @@ class ASR:
         # get a frame of audio
         frame = self.get_audio_frame()
         self.frames.append(frame)
+
+        recframe = (frame * 32767).astype(np.int16)  # 16bit
+        self.recframes.append(recframe)
         # put to output
         self.output_queue.put(frame)
         # context not enough, do not run network.
@@ -429,6 +433,7 @@ class ASR:
             return
 
         inputs = np.concatenate(self.frames)  # [N * chunk]
+
         # discard the old part to save memory
         self.frames = self.frames[-(self.stride_left_size + self.stride_right_size):]
         logits = self.frame_to_text(inputs)
@@ -504,7 +509,7 @@ class ErNerfLink:
         # build asr
         self.asr = ASR(opt)
         self.asr.warm_up()
-
+        self.wframes = []
         # render thread
         self.loop = None
         if self.opt.block_mode:
@@ -552,12 +557,16 @@ class ErNerfLink:
         if self.opt.tts == "edgetts":
             self.asr.input_stream.write(byte_stream)
             print("push_audio byte_stream length", len(byte_stream))
-            if len(byte_stream)>=0:
+            if self.asr.input_stream.tell()>=720*4:
                 self.asr.input_stream.seek(0)
                 stream = self.get_adapter_stream(self.asr.input_stream)  # 统一转换格式
+                if stream is None:
+                    print('ERROR Invalid stream')
+                    return
                 streamlen = stream.shape[0]
                 idx = 0
                 num = 0
+                print("streamlen", streamlen, self.asr.chunk)
                 while streamlen >= self.asr.chunk:
                     self.asr.queue.put(stream[idx:idx + self.asr.chunk])
                     streamlen -= self.asr.chunk
@@ -565,8 +574,8 @@ class ErNerfLink:
                     num += 1
                 #print("push audio")
                 self.user_audio_list.append(stream.shape[0])  # test
-                # if streamlen>0:  #skip last frame(not 20ms)
-                #    self.queue.put(stream[idx:])
+        #        if streamlen>0:  #skip last frame(not 20ms)
+        #          self.asr.queue.put(stream[idx:])
                 self.asr.input_stream.seek(0)  # 移动到开始位置
                 self.asr.input_stream.truncate()  # 清空全部数据
 
@@ -626,6 +635,8 @@ class ErNerfLink:
             insert_frame_idx, n_frame = self.render_blocks.pop(0)
             t = time.time()
             print("listen and render", insert_frame_idx, n_frame)
+            t = time.time()
+            print("listen and render", insert_frame_idx, n_frame)
             for i in range(insert_frame_idx, insert_frame_idx + n_frame):
                 idx = i % self.video_track.stream_len
                 for _ in range(2):  # run 2 ASR steps (audio is at 50FPS, video is at 25FPS)
@@ -667,6 +678,10 @@ class ErNerfLink:
             delay = _starttime+_totalframe*0.04-time.perf_counter() #40ms
             if delay > 0:
                 time.sleep(delay)
+        all_frames = np.concatenate(self.wframes, axis=0)
+        sf.write('output.wav', all_frames, 16000)
+        all_recframes = np.concatenate(self.asr.recframes, axis=0)
+        sf.write('recoutput.wav', all_recframes, 16000)
 
     def render_data_submit_track(self, data):
         """渲染单帧并提交轨道"""
@@ -688,10 +703,15 @@ class ErNerfLink:
         for _ in range(2):
             frame = self.asr.get_audio_out()
             frame = (frame * 32767).astype(np.int16)  # 16bit
+            self.wframes.append(frame)
+            
             audio_frame = AudioFrame(format='s16', layout='mono',
                                      samples=int(AUDIO_PTIME * SAMPLE_RATE))  # 16000/fps
-            audio_frame.planes[0].update(frame.tobytes())
+            if len(frame) < 320:
+                frame = np.pad(frame, (0, 320 - len(frame)))
+            audio_frame.planes[0].update(frame[:320].tobytes())
             audio_frame.sample_rate = 16000
+            # writ the audio frame to a mp3 file
             asyncio.run_coroutine_threadsafe(self.audio_track._queue.put(audio_frame), self.loop)
 
     def get_adapter_stream(self, byte_stream):
@@ -699,14 +719,13 @@ class ErNerfLink:
         stream, sample_rate = sf.read(byte_stream)
         print(f'[INFO]tts audio stream {sample_rate}: {stream.shape}')
         stream = stream.astype(np.float32)
-
-        if stream.ndim > 1:
             # print(f'[WARN] audio has {stream.shape[1]} channels, only use the first.')
-            stream = stream[:, 0]
+        if stream.ndim > 1:
+           stream = stream[:, 0]
 
         if sample_rate != self.asr.sample_rate and stream.shape[0] > 0:
             # change audio sample
-            # print(f'[WARN] audio sample rate is {sample_rate}, resampling into {self.asr.sample_rate}.')
+            print(f'[WARN] audio sample rate is {sample_rate}, resampling into {self.asr.sample_rate}.')
             stream = resampy.resample(x=stream, sr_orig=sample_rate, sr_new=self.asr.sample_rate)
         return stream
        # except LibsndfileError as e:
@@ -720,12 +739,22 @@ class ErNerfLink:
         if tts_type == "edgetts":
             communicate = edge_tts.Communicate(text, voicename)
             with open(OUTPUT_FILE, "wb") as file:
-                for chunk in communicate.stream_sync():
+                async for chunk in communicate.stream():
                     if chunk["type"] == "audio":
+                        file.write(chunk["data"])
                         self.push_audio(chunk["data"])
                     elif chunk["type"] == "WordBoundary":
                         pass
-
+            #self.push_audio(chunk["data"])
+          # with open(OUTPUT_FILE, "wb") as file:
+          #      for chunk in communicate.stream_sync():
+          #          if chunk["type"] == "audio":
+          #              file.write(chunk["data"])
+          #              self.push_audio(chunk["data"])
+          #          elif chunk["type"] == "WordBoundary":
+          #              pass
+            #all_frames = np.concatenate(self.samplerames, axis=0)
+            #sf.write('output_say.wav', all_frames, 16000)
     # def _clean(self):
     #     self.asr.queue = Queue()
     #     self.asr.input_stream = BytesIO()
